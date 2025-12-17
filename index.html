@@ -102,36 +102,13 @@
         </div>
     </footer>
 
-    <script type="module">
-        
-        // --- Gemini API Configuration ---
-        // !!! CRITICAL STEP 1: API KEY INTEGRATED !!!
-        // Your key has been inserted here. The app should now connect to the Gemini API when run locally.
-        const YOUR_API_KEY = "AIzaSyApivNELaxMF6sSRTiiiA88AQpV2vyClZM"; 
-
-        // Uses the environment key if available, otherwise falls back to the local variable.
-        const API_KEY = typeof __api_key !== 'undefined' ? __api_key : YOUR_API_KEY;
-        
-        const API_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${API_KEY}`;
-        const MAX_RETRIES = 5;
-
-        // The core persona instructions for Willy
-        const SYSTEM_INSTRUCTION = `You are Willy AI Companion, a friendly, knowledgeable, and reliable assistant specifically designed for people in rural communities. Your goal is to provide clear, practical, and easy-to-understand advice on a wide range of topics. Use simple, direct language and short paragraphs. Prioritize information related to:
-1. Farming & Agriculture: Basic crop care, pest management, soil health, simple irrigation.
-2. Health & Home Remedies: General wellness tips, common symptom management, and basic first aid (always advise seeking professional medical help for serious issues or if symptoms persist).
-3. General Knowledge: Simple explanations for technology, local government, education, etc.
-When answering, be supportive and encouraging. Always ground your advice in real-world, current data (using the provided search tool) to ensure accuracy. If you discuss health, include a strong disclaimer to see a doctor.`;
-
+    <script>
         const chatMessages = document.getElementById('chat-messages');
         const userInput = document.getElementById('user-input');
         const sendButton = document.getElementById('send-button');
         const sendIcon = document.getElementById('send-icon');
         const loadingSpinner = document.getElementById('loading-spinner');
 
-
-        /**
-         * Adds a message bubble to the chat interface.
-         */
         function addMessage(text, sender, sources = []) {
             const messageDiv = document.createElement('div');
             messageDiv.className = `flex ${sender === 'user' ? 'justify-end' : 'justify-start'}`;
@@ -139,7 +116,6 @@ When answering, be supportive and encouraging. Always ground your advice in real
             const bubble = document.createElement('div');
             bubble.className = `message-bubble ${sender === 'user' ? 'user-bubble' : 'willy-bubble'}`;
             
-            // Convert markdown text to HTML
             const formattedText = text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>').replace(/\n/g, '<br>');
             bubble.innerHTML = formattedText;
 
@@ -169,9 +145,6 @@ When answering, be supportive and encouraging. Always ground your advice in real
             chatMessages.scrollTop = chatMessages.scrollHeight;
         }
 
-        /**
-         * Sets the loading state of the UI.
-         */
         function setLoading(isLoading) {
             sendButton.disabled = isLoading;
             userInput.disabled = isLoading;
@@ -184,69 +157,34 @@ When answering, be supportive and encouraging. Always ground your advice in real
             }
         }
 
-        /**
-         * Handles the API call with exponential backoff.
-         */
-        async function fetchWithRetry(payload) {
-            for (let i = 0; i < MAX_RETRIES; i++) {
-                try {
-                    const response = await fetch(API_URL, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify(payload)
-                    });
-
-                    if (response.ok) {
-                        return response.json();
-                    } else if (response.status === 429 && i < MAX_RETRIES - 1) {
-                        // Too Many Requests, retry with exponential backoff
-                        const delay = Math.pow(2, i) * 1000 + Math.random() * 1000;
-                        await new Promise(resolve => setTimeout(resolve, delay));
-                    } else {
-                        // Other errors or final 429
-                        throw new Error(`API request failed with status: ${response.status}`);
-                    }
-                } catch (error) {
-                    if (i === MAX_RETRIES - 1) {
-                        throw error;
-                    }
-                }
-            }
-        }
-
-        /**
-         * Sends the user's query to the Gemini API and processes the response.
-         */
-        window.askWilly = async function() {
+        async function askWilly() {
             const query = userInput.value.trim();
             if (!query) return;
 
-            // 1. Display user message
             addMessage(query, 'user');
             userInput.value = '';
-
-            // 2. Set loading state
             setLoading(true);
 
-            // 3. Construct API payload
-            const payload = {
-                contents: [{ parts: [{ text: query }] }],
-                tools: [{ "google_search": {} }], // Enable Google Search grounding
-                systemInstruction: {
-                    parts: [{ text: SYSTEM_INSTRUCTION }]
-                },
-            };
-
             try {
-                const result = await fetchWithRetry(payload);
+                const response = await fetch('/api/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ query: query })
+                });
+
+                const result = await response.json();
                 
+                if (result.error) {
+                    addMessage("I apologize, there was a problem: " + result.error, 'willy');
+                    return;
+                }
+
                 const candidate = result.candidates?.[0];
 
                 if (candidate && candidate.content?.parts?.[0]?.text) {
                     const text = candidate.content.parts[0].text;
                     let sources = [];
 
-                    // Extract grounding sources
                     const groundingMetadata = candidate.groundingMetadata;
                     if (groundingMetadata && groundingMetadata.groundingAttributions) {
                         sources = groundingMetadata.groundingAttributions
@@ -258,23 +196,15 @@ When answering, be supportive and encouraging. Always ground your advice in real
                     }
 
                     addMessage(text, 'willy', sources);
-
                 } else {
                     addMessage("I'm sorry, Willy couldn't get a clear answer for that. Please try asking again.", 'willy');
                     console.error("API response missing text content:", result);
                 }
 
             } catch (error) {
-                // Display specific error if the key is the issue
-                if (error.message.includes("API key is still set to placeholder")) {
-                     addMessage("⚠️ **Error:** To run this locally, you must replace the API key placeholder in the code. Please check your browser's console for details.", 'willy');
-                } else {
-                     addMessage("I apologize, I ran into a network or service problem. Please try again.", 'willy');
-                }
-                console.error("Error calling Gemini API:", error);
-
+                addMessage("I apologize, I ran into a network or service problem. Please try again.", 'willy');
+                console.error("Error calling API:", error);
             } finally {
-                // 4. Reset loading state
                 setLoading(false);
             }
         }
